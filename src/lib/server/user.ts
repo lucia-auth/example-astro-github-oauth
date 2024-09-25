@@ -1,9 +1,5 @@
 import { db } from "./db";
 
-export function verifyUsernameInput(username: string): boolean {
-	return username.length > 3 && username.length < 32 && username.trim() === username;
-}
-
 export function createUser(githubId: number, email: string, username: string): User {
 	const row = db.queryOne("INSERT INTO user (github_id, email, username) VALUES (?, ?, ?) RETURNING user.id", [
 		githubId,
