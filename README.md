@@ -1,5 +1,9 @@
 # GitHub OAuth example in Astro
 
+Uses SQLite.  Rate limiting is implemented using JavaScript `Map`.
+
+## Initialize project
+
 Create a GitHub OAuth app. Paste the client ID and secret to a `.env` file.
 
 ```bash
