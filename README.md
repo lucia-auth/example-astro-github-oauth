@@ -1,6 +1,6 @@
 # GitHub OAuth example in Astro
 
-Uses SQLite.  Rate limiting is implemented using JavaScript `Map`.
+Uses SQLite. Rate limiting is implemented using JavaScript `Map`.
 
 ## Initialize project
 
