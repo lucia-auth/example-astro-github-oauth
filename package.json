@@ -1,17 +1,30 @@
 {
-  "name": "example-astro-github-oauth",
-  "type": "module",
-  "version": "0.0.1",
-  "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro check && astro build",
-    "preview": "astro preview",
-    "astro": "astro"
-  },
-  "dependencies": {
-    "astro": "^4.15.9",
-    "@astrojs/check": "^0.9.3",
-    "typescript": "^5.6.2"
-  }
+	"name": "example-astro-github-oauth",
+	"type": "module",
+	"version": "0.0.1",
+	"scripts": {
+		"dev": "astro dev",
+		"start": "astro dev",
+		"build": "astro check && astro build",
+		"preview": "astro preview",
+		"astro": "astro",
+		"format": "prettier -w ."
+	},
+	"dependencies": {
+		"@astrojs/check": "^0.9.3",
+		"@oslojs/crypto": "^1.0.1",
+		"@oslojs/encoding": "^1.1.0",
+		"@pilcrowjs/db-query": "^0.0.2",
+		"@pilcrowjs/object-parser": "^0.0.3",
+		"arctic": "2.0.0-next.9",
+		"astro": "^4.15.9",
+		"better-sqlite3": "^11.3.0",
+		"typescript": "^5.6.2"
+	},
+	"devDependencies": {
+		"@astrojs/node": "^8.3.4",
+		"@types/better-sqlite3": "^7.6.11",
+		"prettier": "^3.3.3",
+		"prettier-plugin-astro": "^0.14.1"
+	}
 }
