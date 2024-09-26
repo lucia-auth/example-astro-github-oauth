@@ -36,7 +36,7 @@ export async function GET(context: APIContext): Promise<Response> {
 	const userRequest = new Request("https://api.github.com/user");
 	userRequest.headers.set("Authorization", `Bearer ${githubAccessToken}`);
 	const userResponse = await fetch(userRequest);
-	const userResult = await userResponse.json();
+	const userResult: unknown = await userResponse.json();
 	const userParser = new ObjectParser(userResult);
 
 	const githubUserId = userParser.getNumber("id");
@@ -53,7 +53,7 @@ export async function GET(context: APIContext): Promise<Response> {
 	const emailListRequest = new Request("https://api.github.com/user/emails");
 	emailListRequest.headers.set("Authorization", `Bearer ${githubAccessToken}`);
 	const emailListResponse = await fetch(emailListRequest);
-	const emailListResult = await emailListResponse.json();
+	const emailListResult: unknown = await emailListResponse.json();
 	if (!Array.isArray(emailListResult) || emailListResult.length < 1) {
 		return new Response("Please restart the process.", {
 			status: 400
