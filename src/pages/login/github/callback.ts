@@ -1,7 +1,7 @@
 import { github } from "@lib/server/oauth";
 import { ObjectParser } from "@pilcrowjs/object-parser";
 import { createUser, getUserFromGitHubId } from "@lib/server/user";
-import { createSession, generateSessionToken, setSessionTokenCookie } from "@lib/server/session";
+import { createSession, inactivityTimeoutSeconds, setSessionTokenCookie } from "@lib/server/session";
 
 import type { OAuth2Tokens } from "arctic";
 import type { APIContext } from "astro";
@@ -44,9 +44,8 @@ export async function GET(context: APIContext): Promise<Response> {
 
 	const existingUser = getUserFromGitHubId(githubUserId);
 	if (existingUser !== null) {
-		const sessionToken = generateSessionToken();
-		const session = createSession(sessionToken, existingUser.id);
-		setSessionTokenCookie(context, sessionToken, session.expiresAt);
+		const session = await createSession(existingUser.id);
+		setSessionTokenCookie(context, session.token, new Date(session.createdAt.getTime() + inactivityTimeoutSeconds * 1000));
 		return context.redirect("/login");
 	}
 
@@ -75,8 +74,7 @@ export async function GET(context: APIContext): Promise<Response> {
 	}
 
 	const user = createUser(githubUserId, email, username);
-	const sessionToken = generateSessionToken();
-	const session = createSession(sessionToken, user.id);
-	setSessionTokenCookie(context, sessionToken, session.expiresAt);
+	const session = await createSession(user.id);
+	setSessionTokenCookie(context, session.token, new Date(session.createdAt.getTime() + inactivityTimeoutSeconds * 1000));
 	return context.redirect("/login");
 }

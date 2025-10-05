@@ -1,47 +1,112 @@
 import { db } from "./db";
-import { encodeBase32, encodeHexLowerCase } from "@oslojs/encoding";
-import { sha256 } from "@oslojs/crypto/sha2";
 
 import type { User } from "./user";
 import type { APIContext } from "astro";
 
-export function validateSessionToken(token: string): SessionValidationResult {
-	const sessionId = encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-	const row = db.queryOne(
-		`
-SELECT session.id, session.user_id, session.expires_at, user.id, user.github_id, user.email, user.username FROM session
-INNER JOIN user ON session.user_id = user.id
-WHERE session.id = ?
-`,
-		[sessionId]
-	);
+export const inactivityTimeoutSeconds = 60 * 60 * 24 * 10; // 10 days
+const activityCheckIntervalSeconds = 60 * 60; // 1 hour
 
-	if (row === null) {
-		return { session: null, user: null };
+export async function validateSessionToken(token: string): Promise<Session | null> {
+	const now = new Date();
+	const tokenParts = token.split(".");
+	if (tokenParts.length !== 2) {
+		return null;
 	}
+	const sessionId = tokenParts[0];
+	const sessionSecret = tokenParts[1];
+
+	const session = getSession(sessionId);
+
+	if (!session) {
+		return null;
+	}
+
+	const tokenSecretHash = await hashSecret(sessionSecret);
+	const validSecret = constantTimeEqual(tokenSecretHash, session.secretHash);
+	if (!validSecret) {
+		return null;
+	}
+
+	if (now.getTime() - session.lastVerifiedAt.getTime() >= activityCheckIntervalSeconds * 1000) {
+		session.lastVerifiedAt = now;
+		db.execute("UPDATE session SET last_verified_at = ? WHERE id = ?", [
+			Math.floor(session.lastVerifiedAt.getTime() / 1000),
+			sessionId
+		]);
+	}
+
+	return session;
+}
+
+function getSession(sessionId: string): Session | null {
+	const now = new Date();
+
+	const row = db.queryOne("SELECT id, user_id, secret_hash, created_at, last_verified_at FROM session WHERE id = ?", [
+		sessionId
+	]);
+
+	if (!row) {
+		return null;
+	}
+
 	const session: Session = {
 		id: row.string(0),
 		userId: row.number(1),
-		expiresAt: new Date(row.number(2) * 1000)
+		secretHash: row.bytes(2),
+		createdAt: new Date(row.number(3) * 1000),
+		lastVerifiedAt: new Date(row.number(4) * 1000)
 	};
-	const user: User = {
-		id: row.number(3),
-		githubId: row.number(4),
-		email: row.string(5),
-		username: row.string(6)
+
+	// Check expiration
+	if (now.getTime() - session.createdAt.getTime() >= inactivityTimeoutSeconds * 1000) {
+		invalidateSession(session.id);
+		return null;
+	}
+
+	return session;
+}
+
+function getUser(userId: number): User | null {
+	const row = db.queryOne("SELECT id, github_id, username, email FROM user WHERE id = ?", [userId]);
+	if (!row) {
+		return null;
+	}
+	return {
+		id: row.number(0),
+		githubId: row.number(1),
+		username: row.string(2),
+		email: row.string(3)
 	};
-	if (Date.now() >= session.expiresAt.getTime()) {
-		db.execute("DELETE FROM session WHERE id = ?", [session.id]);
+}
+
+export async function getSessionWithUser(
+	token: string
+): Promise<{ session: Session; user: User } | { session: null; user: null }> {
+	const session = await validateSessionToken(token);
+	if (!session) {
 		return { session: null, user: null };
 	}
-	if (Date.now() >= session.expiresAt.getTime() - 1000 * 60 * 60 * 24 * 15) {
-		session.expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30);
-		db.execute("UPDATE session SET expires_at = ? WHERE session.id = ?", [
-			Math.floor(session.expiresAt.getTime() / 1000),
-			session.id
-		]);
+
+	const user = getUser(session.userId);
+	if (!user) {
+		return { session: null, user: null };
 	}
-	return { session, user };
+
+	return {
+		session,
+		user
+	};
+}
+
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.byteLength !== b.byteLength) {
+		return false;
+	}
+	let c = 0;
+	for (let i = 0; i < a.byteLength; i++) {
+		c |= a[i] ^ b[i];
+	}
+	return c === 0;
 }
 
 export function invalidateSession(sessionId: string): void {
@@ -72,32 +137,66 @@ export function deleteSessionTokenCookie(context: APIContext): void {
 	});
 }
 
-export function generateSessionToken(): string {
-	const tokenBytes = new Uint8Array(20);
-	crypto.getRandomValues(tokenBytes);
-	const token = encodeBase32(tokenBytes).toLowerCase();
-	return token;
+export interface Session {
+	id: string;
+	userId: number;
+	secretHash: Uint8Array; // Uint8Array is a byte array
+	createdAt: Date;
+	lastVerifiedAt: Date;
 }
 
-export function createSession(token: string, userId: number): Session {
-	const sessionId = encodeHexLowerCase(sha256(new TextEncoder().encode(token)));
-	const session: Session = {
-		id: sessionId,
+export function generateSecureRandomString(): string {
+	// Human readable alphabet (a-z, 0-9 without l, o, 0, 1 to avoid confusion)
+	const alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
+
+	// Generate 24 bytes = 192 bits of entropy.
+	// We're only going to use 5 bits per byte so the total entropy will be 192 * 5 / 8 = 120 bits
+	const bytes = new Uint8Array(24);
+	crypto.getRandomValues(bytes);
+
+	let id = "";
+	for (let i = 0; i < bytes.length; i++) {
+		// >> 3 "removes" the right-most 3 bits of the byte
+		id += alphabet[bytes[i] >> 3];
+	}
+	return id;
+}
+
+export async function createSession(userId: number): Promise<SessionWithToken> {
+	const now = new Date();
+
+	const id = generateSecureRandomString();
+	const secret = generateSecureRandomString();
+	const secretHash = await hashSecret(secret);
+
+	const token = id + "." + secret;
+
+	const session: SessionWithToken = {
+		id,
 		userId,
-		expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30)
+		secretHash,
+		createdAt: now,
+		lastVerifiedAt: now,
+		token
 	};
-	db.execute("INSERT INTO session (id, user_id, expires_at) VALUES (?, ?, ?)", [
+
+	db.execute("INSERT INTO session (id, user_id, secret_hash, created_at, last_verified_at) VALUES (?, ?, ?, ?, ?)", [
 		session.id,
-		session.userId,
-		Math.floor(session.expiresAt.getTime() / 1000)
+		userId,
+		session.secretHash,
+		Math.floor(session.createdAt.getTime() / 1000),
+		Math.floor(session.lastVerifiedAt.getTime() / 1000)
 	]);
+
 	return session;
 }
 
-export interface Session {
-	id: string;
-	expiresAt: Date;
-	userId: number;
+async function hashSecret(secret: string): Promise<Uint8Array> {
+	const secretBytes = new TextEncoder().encode(secret);
+	const secretHashBuffer = await crypto.subtle.digest("SHA-256", secretBytes);
+	return new Uint8Array(secretHashBuffer);
 }
 
-type SessionValidationResult = { session: Session; user: User } | { session: null; user: null };
+interface SessionWithToken extends Session {
+	token: string;
+}

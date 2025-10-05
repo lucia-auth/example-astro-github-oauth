@@ -1,6 +1,6 @@
 import { defineMiddleware, sequence } from "astro:middleware";
 import { TokenBucket } from "@lib/server/rate-limit";
-import { deleteSessionTokenCookie, setSessionTokenCookie, validateSessionToken } from "@lib/server/session";
+import { deleteSessionTokenCookie, getSessionWithUser, inactivityTimeoutSeconds, setSessionTokenCookie, validateSessionToken } from "@lib/server/session";
 
 const bucket = new TokenBucket(100, 1);
 
@@ -24,16 +24,16 @@ const rateLimitMiddleware = defineMiddleware((context, next) => {
 	return next();
 });
 
-const authMiddleware = defineMiddleware((context, next) => {
+const authMiddleware = defineMiddleware(async (context, next) => {
 	const token = context.cookies.get("session")?.value ?? null;
 	if (token === null) {
 		context.locals.session = null;
 		context.locals.user = null;
 		return next();
 	}
-	const { user, session } = validateSessionToken(token);
+	const { user, session } = await getSessionWithUser(token);
 	if (session !== null) {
-		setSessionTokenCookie(context, token, session.expiresAt);
+		setSessionTokenCookie(context, token, new Date(session.lastVerifiedAt.getTime() + inactivityTimeoutSeconds * 1000));
 	} else {
 		deleteSessionTokenCookie(context);
 	}
